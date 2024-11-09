@@ -1,0 +1,191 @@
+{% extends "base.html" %}
+
+{% block content %}
+<style>
+    .metrics-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 20px;
+        margin: 20px;
+    }
+    .card {
+        background: white;
+        padding: 20px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    #connectionsTable {
+        width: 100%;
+        border-collapse: collapse;
+    }
+    #connectionsTable th, #connectionsTable td {
+        padding: 8px;
+        text-align: left;
+        border-bottom: 1px solid #ddd;
+    }
+    canvas {
+        max-height: 300px;
+        width: 100%;
+    }
+</style>
+
+<div class="dashboard">
+    <header>
+        <h1>Network Traffic Monitor</h1>
+    </header>
+
+    <div class="metrics-grid">
+        <div class="card">
+            <h2>Global Statistics</h2>
+            <div id="globalStats">
+                <p>Total Packets: <span id="totalPackets">0</span></p>
+                <p>Packets/Second: <span id="packetsPerSecond">0.00</span></p>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Protocol Distribution</h2>
+            <canvas id="protocolChart"></canvas>
+        </div>
+
+        <div class="card">
+            <h2>Traffic Rate</h2>
+            <canvas id="trafficRateChart"></canvas>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Active Connections</h2>
+        <table id="connectionsTable">
+            <thead>
+                <tr>
+                    <th>Source IP:Port</th>
+                    <th>Destination IP:Port</th>
+                    <th>Protocol</th>
+                    <th>Packets</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const socket = io();
+        const totalPacketsElement = document.getElementById('totalPackets');
+        const packetsPerSecondElement = document.getElementById('packetsPerSecond');
+        const connectionsTable = document.getElementById('connectionsTable').getElementsByTagName('tbody')[0];
+        
+        // Initialize Protocol Chart
+        const protocolChart = new Chart(
+            document.getElementById('protocolChart').getContext('2d'),
+            {
+                type: 'pie',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        data: [],
+                        backgroundColor: [
+                            '#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#9966FF'
+                        ]
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false
+                }
+            }
+        );
+
+        // Initialize Traffic Rate Chart
+        const trafficChart = new Chart(
+            document.getElementById('trafficRateChart').getContext('2d'),
+            {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Packets/Second',
+                        data: [],
+                        borderColor: '#36A2EB',
+                        tension: 0.1,
+                        fill: false
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: 'Packets per Second'
+                            }
+                        },
+                        x: {
+                            title: {
+                                display: true,
+                                text: 'Time'
+                            }
+                        }
+                    },
+                    animation: {
+                        duration: 0
+                    }
+                }
+            }
+        );
+
+        const timePoints = [];
+        const packetRates = [];
+        const MAX_POINTS = 60;
+
+        socket.on('stats_update', function(data) {
+            if (!data) return;
+
+            // Update global stats
+            totalPacketsElement.textContent = data.total_packets.toLocaleString();
+            packetsPerSecondElement.textContent = data.packets_per_second.toFixed(2);
+
+            // Update protocol chart
+            protocolChart.data.labels = Object.keys(data.protocols);
+            protocolChart.data.datasets[0].data = Object.values(data.protocols);
+            protocolChart.update();
+
+            // Update traffic rate chart
+            const now = new Date().toLocaleTimeString();
+            timePoints.push(now);
+            packetRates.push(data.packets_per_second);
+            
+            if (timePoints.length > MAX_POINTS) {
+                timePoints.shift();
+                packetRates.shift();
+            }
+            
+            trafficChart.data.labels = timePoints;
+            trafficChart.data.datasets[0].data = packetRates;
+            trafficChart.update();
+
+            // Update connections table
+            connectionsTable.innerHTML = '';
+            data.connections.forEach(conn => {
+                const row = connectionsTable.insertRow();
+                row.innerHTML = `
+                    <td>${conn.source_ip}:${conn.source_port}</td>
+                    <td>${conn.dest_ip}:${conn.dest_port}</td>
+                    <td>${conn.protocol}</td>
+                    <td>${conn.packets}</td>
+                `;
+            });
+        });
+
+        socket.on('connect_error', (error) => {
+            console.log('Connection Error:', error);
+        });
+    });
+</script>
+{% endblock %}
